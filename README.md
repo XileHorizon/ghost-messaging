@@ -27,6 +27,13 @@ github.com/InfamousVague/ghost-gmessages-sidecar).
 
 ## What it does
 
+- **Ghost Connect hands a browser sign-in straight to the desktop app** (0.11.6, not released; Kevin, 2026-11-21:
+  "connect the Ghost Connect browser extension to Ghost Messaging on desktop"). Settings › Browser extension makes a
+  six-digit code for two minutes and lists browsers paired with it; only a hash of each browser's token is kept. The
+  extension talks to `127.0.0.1` only, and only extension origins may open its WebSocket. Messenger and Instagram
+  cookies wait in memory while Ghost shows the service's own warning; only after the person agrees are they given to
+  the existing account helper. The socket answers when sign-in finishes or is cancelled. Sending to a phone is left
+  for the next part. Tests: ghost_connect_test.
 - **Becomes the default SMS app**: the first screen asks Android for the SMS role. Every existing conversation is
   there straight away, because messages live in Android's own SMS/MMS database (the Telephony provider), not the
   app. Switching back to another SMS app loses nothing.

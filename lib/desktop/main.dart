@@ -37,9 +37,11 @@ import '../ui/update_banner.dart';
 import 'ui/wizard.dart';
 import '../inbox/inbox.dart';
 import '../ui/inbox_ui.dart';
+import '../ui/ghost_connect.dart';
 import '../circles/circles.dart';
 import '../files/files_store.dart';
 import 'gm_web.dart';
+import 'ghost_connect.dart';
 import 'updates.dart';
 import '../people.dart';
 import '../plugins/pack/pack.dart' show InstalledPlugins;
@@ -171,6 +173,18 @@ Future<void> desktopMain({List<Peer>? peers, String? folder, bool? bonjour, bool
   // Telegram's and Bluesky's chats (lib/inbox): the computer signs in to them itself, as their own apps do.
   addInboxSettings();
   unawaited(Inbox.instance.start(state));
+  // Ghost Connect (Kevin, 2026-11-21: the browser extension hands a fresh browser session to a desktop helper):
+  // loopback only, with the browser warning still agreed to in this app before a helper sees the cookies.
+  final ghostConnect = GhostConnectProtocol(
+    store: DeskGhostBrowserStore(store),
+    deliver: GhostConnectUi.instance.deliver,
+    deviceName: await MacPlatform.computerName(),
+    appVersion: appVersion,
+  );
+  await ghostConnect.load();
+  GhostConnectUi.instance.protocol = ghostConnect;
+  addGhostConnectSettings(ghostConnect);
+  unawaited(GhostConnectServer(ghostConnect).start());
   // The updates looked for at the splash, told to the phone's screens too, so its banner and its words are the
   // computer's (remote.dart).
   if (macUpdates != null) calls.attachUpdates(macUpdates);
@@ -311,6 +325,7 @@ class _DesktopAppState extends State<DesktopApp> {
   void initState() {
     super.initState();
     FilesShareIn.navigateWith(_navigator);
+    GhostConnectUi.instance.navigateWith(_navigator);
   }
 
   @override
