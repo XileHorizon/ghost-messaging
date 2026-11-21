@@ -134,6 +134,7 @@ class AccountHelper extends InboxNetwork {
   static const _mostKept = 400;
 
   HelperLink? _link;
+  Future<void>? _starting;
   StreamSubscription<Map<String, Object?>>? _sub;
   AppState? _app;
   InboxState _state = InboxState.unavailable;
@@ -186,7 +187,19 @@ class AccountHelper extends InboxNetwork {
   @override
   Future<void> start(AppState app) async {
     _app = app;
-    if (soon) return;
+    if (soon || _link != null) return;
+    final alreadyStarting = _starting;
+    if (alreadyStarting != null) return alreadyStarting;
+    final starting = _start();
+    _starting = starting;
+    try {
+      await starting;
+    } finally {
+      if (identical(_starting, starting)) _starting = null;
+    }
+  }
+
+  Future<void> _start() async {
     final link = await (this.link ?? _process)();
     if (link == null) {
       _state = InboxState.unavailable;

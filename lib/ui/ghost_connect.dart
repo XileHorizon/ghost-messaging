@@ -29,17 +29,20 @@ class GhostConnectUi {
     _ready = null;
   }
 
-  Future<String?> deliver(String service, Map<String, String> cookies) async {
+  Future<String?> deliver(String service, Map<String, String> cookies, Future<void> cancelled) async {
     final network = Inbox.instance.named(service);
     if (network is! AccountHelper) {
       throw GhostConnectError(
         '${service == 'linkedin' ? 'LinkedIn' : service} isn\'t available in this build of Ghost.',
       );
     }
-    while (_navigator?.currentState == null) {
+    var wasCancelled = false;
+    unawaited(cancelled.then((_) => wasCancelled = true));
+    while (_navigator?.currentState == null && !wasCancelled) {
       _ready ??= Completer<void>();
-      await _ready!.future;
+      await Future.any([_ready!.future, cancelled]);
     }
+    if (wasCancelled) return null;
     final answer = Completer<String?>();
     _navigator!.currentState!.push(
       PageRouteBuilder<void>(
@@ -47,6 +50,7 @@ class GhostConnectUi {
           network: network,
           cookies: cookies,
           answer: answer,
+          cancelled: cancelled,
         ),
       ),
     );
@@ -199,10 +203,12 @@ class GhostConnectSignIn extends StatefulWidget {
     required this.network,
     required this.cookies,
     required this.answer,
+    required this.cancelled,
   });
   final AccountHelper network;
   final Map<String, String> cookies;
   final Completer<String?> answer;
+  final Future<void> cancelled;
   @override
   State<GhostConnectSignIn> createState() => _GhostConnectSignInState();
 }
@@ -210,6 +216,18 @@ class GhostConnectSignIn extends StatefulWidget {
 class _GhostConnectSignInState extends State<GhostConnectSignIn> {
   bool _busy = false;
   bool _finished = false;
+  bool _cancelled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(widget.cancelled.then((_) {
+      _cancelled = true;
+      if (!mounted || _busy || _finished) return;
+      _answer(null);
+      Navigator.of(context).pop();
+    }));
+  }
 
   void _answer(String? account) {
     if (_finished) return;
@@ -220,10 +238,16 @@ class _GhostConnectSignInState extends State<GhostConnectSignIn> {
   Future<void> _agree() async {
     if (_busy) return;
     setState(() => _busy = true);
-    final ok = await widget.network.signIn(jsonEncode(widget.cookies));
+    await Inbox.instance.enable(widget.network);
+    final signingIn = widget.network.signIn(jsonEncode(widget.cookies));
+    widget.cookies.clear();
+    final ok = await signingIn;
     if (!mounted) return;
     if (ok) {
       _answer(widget.network.account ?? widget.network.service.name);
+      Navigator.of(context).pop();
+    } else if (_cancelled) {
+      _answer(null);
       Navigator.of(context).pop();
     } else {
       setState(() => _busy = false);
@@ -244,7 +268,7 @@ class _GhostConnectSignInState extends State<GhostConnectSignIn> {
   @override
   Widget build(BuildContext context) {
     final service = widget.network.service;
-    return GhostPage(
+    final page = GhostPage(
       title: 'Sign in to ${service.name}',
       body: SettingsPaneScope(
         finder: SettingsFinder(),
@@ -297,5 +321,6 @@ class _GhostConnectSignInState extends State<GhostConnectSignIn> {
         ),
       ),
     );
+    return PopScope(canPop: !_busy, child: page);
   }
 }

@@ -105,6 +105,27 @@ void main() {
       return (n, helper);
     }
 
+    test('starting twice while the helper opens starts it only once', () async {
+      final helper = FakeHelper();
+      final ready = Completer<HelperLink?>();
+      var starts = 0;
+      final n = AccountHelper(
+        instagramService,
+        link: () {
+          starts++;
+          return ready.future;
+        },
+        folder: dir.path,
+      );
+      final first = n.start(AppState());
+      final second = n.start(AppState());
+      expect(starts, 1);
+      ready.complete(helper);
+      await Future.wait([first, second]);
+      expect(n.state, InboxState.signedOut);
+      n.dispose();
+    });
+
     test('without its helper it is not in this build', () async {
       final n = AccountHelper(messengerService, link: () async => null, folder: dir.path);
       await n.start(AppState());

@@ -85,8 +85,7 @@ class GhostConnectError implements Exception {
   String toString() => message;
 }
 
-typedef GhostDeliver =
-    Future<String?> Function(String service, Map<String, String> cookies);
+typedef GhostDeliver = Future<String?> Function(String service, Map<String, String> cookies, Future<void> cancelled);
 
 /// Ghost Connect's requests apart from the socket and screen, so security and the sign-in handoff are testable.
 class GhostConnectProtocol extends ChangeNotifier {
@@ -141,7 +140,7 @@ class GhostConnectProtocol extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<Object?> answer(Map<String, Object?> request) async {
+  Future<Object?> answer(Map<String, Object?> request, {Future<void>? cancelled}) async {
     switch (request['op']) {
       case 'hello':
         final token = request['token'];
@@ -164,7 +163,7 @@ class GhostConnectProtocol extends ChangeNotifier {
         }
         return null;
       case 'deliver':
-        return _deliver(request);
+        return _deliver(request, cancelled ?? Completer<void>().future);
       default:
         throw const GhostConnectError('Ghost doesn\'t know that request.');
     }
@@ -202,7 +201,7 @@ class GhostConnectProtocol extends ChangeNotifier {
     return {'token': token, 'device': deviceName};
   }
 
-  Future<Map<String, Object?>> _deliver(Map<String, Object?> request) async {
+  Future<Map<String, Object?>> _deliver(Map<String, Object?> request, Future<void> cancelled) async {
     final token = request['token'];
     if (token is! String || !_hasToken(token)) {
       throw const GhostConnectError(
@@ -231,7 +230,7 @@ class GhostConnectProtocol extends ChangeNotifier {
         cookies[entry.key as String] = entry.value as String;
       }
     }
-    final account = await deliver(service, cookies);
+    final account = await deliver(service, cookies, cancelled);
     if (account == null) throw const GhostConnectError('Cancelled in Ghost.');
     return {'account': account, 'where': 'desktop'};
   }
@@ -316,13 +315,22 @@ class GhostConnectServer {
     }
     try {
       final socket = await WebSocketTransformer.upgrade(request);
-      socket.listen((message) => _message(socket, message));
+      final cancelled = Completer<void>();
+      socket.listen(
+        (message) => _message(socket, message, cancelled.future),
+        onDone: () {
+          if (!cancelled.isCompleted) cancelled.complete();
+        },
+        onError: (_) {
+          if (!cancelled.isCompleted) cancelled.complete();
+        },
+      );
     } catch (e) {
       log('Ghost Connect refused a WebSocket: $e');
     }
   }
 
-  Future<void> _message(WebSocket socket, Object? message) async {
+  Future<void> _message(WebSocket socket, Object? message, Future<void> cancelled) async {
     Object? id;
     try {
       final decoded = jsonDecode(
@@ -331,26 +339,17 @@ class GhostConnectServer {
       if (decoded is! Map) throw const FormatException();
       final request = decoded.cast<String, Object?>();
       id = request['id'];
-      final result = await protocol.answer(request);
-      socket.add(jsonEncode({'id': id, 'ok': true, 'result': result}));
+      final result = await protocol.answer(request, cancelled: cancelled);
+      _send(socket, {'id': id, 'ok': true, 'result': result});
     } on GhostConnectError catch (e) {
-      socket.add(
-        jsonEncode({
-          'id': id,
-          'ok': false,
-          'error': e.message,
-          if (e.code != null) 'code': e.code,
-        }),
-      );
+      _send(socket, {'id': id, 'ok': false, 'error': e.message, if (e.code != null) 'code': e.code});
     } catch (_) {
-      socket.add(
-        jsonEncode({
-          'id': id,
-          'ok': false,
-          'error': 'Ghost could not read that request.',
-        }),
-      );
+      _send(socket, {'id': id, 'ok': false, 'error': 'Ghost could not read that request.'});
     }
+  }
+
+  static void _send(WebSocket socket, Map<String, Object?> message) {
+    if (socket.readyState == WebSocket.open) socket.add(jsonEncode(message));
   }
 
   static bool _extensionOrigin(String origin) =>
